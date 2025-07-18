@@ -28,19 +28,19 @@ DESPESAS_OPCOES = ["Alimentação", "Aluguel", "Capacitação", "Combustível", 
 ATIVIDADES_OPCOES = ["Acompanhamento de projetos", "Atividade Interna", "Atividades Comerciais em Geral", "Atividades de Negócios em Geral", "Certificação/Capacitação", "Deslocamento", "Reunião Cliente", "Reunião Compasso", "Treinamento a Clientes", "Treinamento Interno"]
 
 # --- Funções de Lógica ---
-# CORREÇÃO: Removido o @st.cache_data que causava o problema de não reler a imagem.
 def extrair_dados_nf(imagem_bytes):
-    """Usa OCR para extrair data e valor, com otimizações e feedback de sucesso."""
+    """Usa OCR para extrair data e valor, retornando também o texto completo para depuração."""
+    texto_nf_completo = ""
     try:
         imagem = Image.open(BytesIO(imagem_bytes))
         imagem.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
         imagem = imagem.convert('L')
 
-        texto_nf = pytesseract.image_to_string(imagem, lang='por')
+        texto_nf_completo = pytesseract.image_to_string(imagem, lang='por')
         
         data_extraida, valor_extraido = None, None
 
-        padrao_data = re.search(r'(\d{2}[/.-]\d{2}[/.-]\d{2,4})', texto_nf)
+        padrao_data = re.search(r'(\d{2}[/.-]\d{2}[/.-]\d{2,4})', texto_nf_completo)
         if padrao_data:
             data_str = re.sub(r'[.-]', '/', padrao_data.group(1))
             try:
@@ -48,14 +48,15 @@ def extrair_dados_nf(imagem_bytes):
             except ValueError:
                 data_extraida = datetime.strptime(data_str, '%d/%m/%y').date()
 
-        padrao_valor = re.search(r'(?:VALOR\s+TOTAL|TOTAL\s+A\s+PAGAR|TOTAL|SUBTOTAL)\s*R?\$\s*([\d,]+\.?\d{2})', texto_nf, re.IGNORECASE)
+        padrao_valor = re.search(r'(?:VALOR\s+TOTAL|TOTAL\s+A\s+PAGAR|VALOR\s+L[ÍI]QUIDO|TOTAL|SUBTOTAL)\s*R?\$\s*([\d,]+\.?\d{2})', texto_nf_completo, re.IGNORECASE)
         if padrao_valor:
             valor_str = padrao_valor.group(1).replace('.', '').replace(',', '.')
             valor_extraido = float(valor_str)
         
-        return data_extraida, valor_extraido
-    except Exception:
-        return None, None
+        return data_extraida, valor_extraido, texto_nf_completo
+    except Exception as e:
+        st.error(f"Ocorreu um erro técnico durante o OCR: {e}")
+        return None, None, texto_nf_completo
 
 def gerar_pdf_otimizado(lista_de_despesas):
     pdf = FPDF()
@@ -103,16 +104,21 @@ with st.expander("📎 Anexar Arquivo do Celular"):
 
 if imagem_bytes:
     with st.spinner('Lendo a nota fiscal (otimizado)...'):
-        data_lida, valor_lido = extrair_dados_nf(imagem_bytes)
+        data_lida, valor_lido, texto_completo = extrair_dados_nf(imagem_bytes)
     
+    st.subheader("🕵️‍♂️ Resultado da Depuração do OCR")
+    st.markdown(f"**Data Encontrada:** `{data_lida}` | **Valor Encontrado:** `{valor_lido}`")
+    with st.expander("Clique para ver o texto completo extraído da imagem"):
+        st.code(texto_completo if texto_completo else "Nenhum texto foi extraído.")
+
     if data_lida and valor_lido:
         st.session_state.ocr_date = data_lida
         st.session_state.ocr_value = valor_lido
-        st.success("Nota fiscal lida! Verifique os campos abaixo.")
+        st.success("Leitura concluída! Verifique os campos abaixo e preencha o restante.")
     else:
-        st.warning("Não foi possível ler a data e/ou o valor da nota. Por favor, preencha manualmente.")
+        st.warning("Não foi possível ler a data e/ou o valor da nota. Verifique o resultado da depuração acima e preencha os campos manualmente.")
 
-st.subheader("2. Verifique os dados e preencha o restante")
+st.subheader("2. Formulário de Despesa")
 with st.form("form_despesas"):
     col1, col2 = st.columns(2)
     with col1:
