@@ -51,14 +51,10 @@ def gerar_pdf_otimizado(lista_de_despesas):
             titulo = f"Despesa: {despesa['Despesa']} - Data: {despesa['Data'].strftime('%d/%m/%Y')} - Valor: R$ {despesa['Valor']:.2f}"
             pdf.set_font("Arial", size=12)
             pdf.cell(200, 10, txt=titulo, ln=True, align='C')
-            
             imagem_original = Image.open(BytesIO(despesa['Imagem']))
             buffer_otimizado = BytesIO()
             imagem_original.save(buffer_otimizado, format="JPEG", quality=80, optimize=True)
-            
             pdf.image(buffer_otimizado, x=10, y=30, w=190)
-            
-    # CORREÇÃO: Converte o 'bytearray' para o formato 'bytes' que o Streamlit espera.
     return bytes(pdf.output())
 
 # --- Inicialização da Sessão ---
@@ -68,14 +64,27 @@ if 'lista_despesas' not in st.session_state:
 # --- Interface Gráfica ---
 st.title("💸 Lançador Inteligente de Despesas")
 
-st.subheader("1. Faça o upload da Nota Fiscal (Opcional)")
-uploaded_file = st.file_uploader("Selecione a imagem da sua NF (.jpg, .png)", type=['jpg', 'png', 'jpeg'])
-
-data_valor_default, valor_default = datetime.now().date(), 0.01
+st.subheader("1. Adicione a Nota Fiscal")
 imagem_bytes = None
 
-if uploaded_file is not None:
-    imagem_bytes = uploaded_file.getvalue()
+# --- NOVO SISTEMA DE ABAS PARA UPLOAD ---
+tab_camera, tab_upload = st.tabs(["📷 Tirar Foto", "📎 Anexar Arquivo"])
+
+with tab_camera:
+    foto_camera = st.camera_input("Aponte a câmera para a nota fiscal")
+    if foto_camera:
+        imagem_bytes = foto_camera.getvalue()
+
+with tab_upload:
+    arquivo_anexado = st.file_uploader("Selecione a imagem da sua NF (.jpg, .png)", type=['jpg', 'png', 'jpeg'])
+    if arquivo_anexado:
+        imagem_bytes = arquivo_anexado.getvalue()
+
+# --- FIM DO NOVO SISTEMA DE ABAS ---
+
+data_valor_default, valor_default = datetime.now().date(), 0.01
+
+if imagem_bytes is not None:
     imagem = Image.open(BytesIO(imagem_bytes))
     with st.spinner('Lendo a nota fiscal...'):
         data_valor_default, valor_default = extrair_dados_nf(imagem)
