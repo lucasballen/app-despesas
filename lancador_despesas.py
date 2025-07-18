@@ -29,23 +29,14 @@ ATIVIDADES_OPCOES = ["Acompanhamento de projetos", "Atividade Interna", "Ativida
 
 # --- Funções de Lógica ---
 def extrair_dados_nf(imagem):
-    """Usa OCR para extrair data e valor, com otimizações de imagem para velocidade."""
     try:
         imagem.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
         imagem = imagem.convert('L')
-
         texto_nf = pytesseract.image_to_string(imagem, lang='por')
-        
         match_data = re.search(r'(\d{2}/\d{2}/\d{4})', texto_nf)
         data_extraida = datetime.strptime(match_data.group(1), '%d/%m/%Y').date() if match_data else datetime.now().date()
-        
         match_valor = re.search(r'(?:VALOR TOTAL|TOTAL|Valor a pagar)\s*R?\$\s*([\d,]+\.?\d{2})', texto_nf, re.IGNORECASE)
-        if match_valor:
-            valor_str = match_valor.group(1).replace('.', '').replace(',', '.')
-            valor_extraido = float(valor_str)
-        else:
-            valor_extraido = 0.01
-            
+        valor_extraido = float(match_valor.group(1).replace('.', '').replace(',', '.')) if match_valor else 0.01
         return data_extraida, valor_extraido
     except Exception:
         return datetime.now().date(), 0.01
@@ -58,53 +49,53 @@ def gerar_pdf_otimizado(lista_de_despesas):
             titulo = f"Despesa: {despesa['Despesa']} - Data: {despesa['Data'].strftime('%d/%m/%Y')} - Valor: R$ {despesa['Valor']:.2f}"
             pdf.set_font("Arial", size=12)
             pdf.cell(200, 10, txt=titulo, ln=True, align='C')
-            
             imagem_original = Image.open(BytesIO(despesa['Imagem']))
             buffer_otimizado = BytesIO()
             imagem_original.save(buffer_otimizado, format="JPEG", quality=80, optimize=True)
-            
             pdf.image(buffer_otimizado, x=10, y=30, w=190)
-            
     return bytes(pdf.output())
 
 # --- Inicialização da Sessão ---
 if 'lista_despesas' not in st.session_state:
     st.session_state.lista_despesas = []
+# CORREÇÃO: Usar o session_state para guardar os valores do OCR
+if 'ocr_date' not in st.session_state:
+    st.session_state.ocr_date = datetime.now().date()
+if 'ocr_value' not in st.session_state:
+    st.session_state.ocr_value = 0.01
 
 # --- Interface Gráfica ---
 st.title("💸 Lançador Inteligente de Despesas")
-
 st.subheader("1. Adicione a Nota Fiscal")
-imagem_bytes = None
 
-# --- LÓGICA DE UPLOAD COM EXPANDER ---
-# A câmera e o upload ficam em seções "sanfona" que só carregam quando abertas.
+imagem_bytes = None
 with st.expander("📷 Tirar Foto com a Câmera"):
     foto_camera = st.camera_input("Aponte a câmera para a nota fiscal", key="camera")
     if foto_camera:
         imagem_bytes = foto_camera.getvalue()
 
 with st.expander("📎 Anexar Arquivo do Celular"):
-    arquivo_anexado = st.file_uploader("Selecione a imagem da sua NF (.jpg, .png)", type=['jpg', 'png', 'jpeg'], key="uploader")
+    arquivo_anexado = st.file_uploader("Selecione a imagem da sua NF", type=['jpg', 'png', 'jpeg'], key="uploader")
     if arquivo_anexado:
         imagem_bytes = arquivo_anexado.getvalue()
 
-data_valor_default, valor_default = datetime.now().date(), 0.01
-
-if imagem_bytes is not None:
+if imagem_bytes:
     imagem = Image.open(BytesIO(imagem_bytes))
     with st.spinner('Lendo a nota fiscal (otimizado)...'):
-        data_valor_default, valor_default = extrair_dados_nf(imagem)
+        # CORREÇÃO: Salva os dados lidos no session_state
+        st.session_state.ocr_date, st.session_state.ocr_value = extrair_dados_nf(imagem)
     st.success("Nota fiscal lida! Verifique os campos abaixo.")
 
 st.subheader("2. Verifique os dados e preencha o restante")
-with st.form("form_despesas", clear_on_submit=True):
+with st.form("form_despesas", clear_on_submit=False):
     col1, col2 = st.columns(2)
     with col1:
         projeto = st.selectbox("Projeto*", options=PROJETOS)
-        data = st.date_input("Data*", value=data_valor_default)
+        # CORREÇÃO: O valor padrão vem do session_state
+        data = st.date_input("Data*", value=st.session_state.ocr_date)
         despesa_tipo = st.selectbox("Despesa*", options=DESPESAS_OPCOES)
-        valor_lido = st.number_input("Valor (R$)*", value=valor_default, min_value=0.01, format="%.2f")
+        # CORREÇÃO: O valor padrão vem do session_state
+        valor_lido = st.number_input("Valor (R$)*", value=st.session_state.ocr_value, min_value=0.01, format="%.2f")
     with col2:
         profissional = st.selectbox("Profissional*", options=PROFISSIONAIS)
         atividade = st.selectbox("Atividade*", options=ATIVIDADES_OPCOES)
@@ -130,6 +121,10 @@ with st.form("form_despesas", clear_on_submit=True):
             nova_despesa = {'Projeto': projeto, 'Profissional': profissional, 'Data': data, 'Despesa': despesa_tipo, 'Atividade': atividade, 'Valor': valor_a_registrar, 'Observações': observacao_final, 'AlmocoCliente': almoco_cliente, 'Imagem': imagem_bytes}
             st.session_state.lista_despesas.append(nova_despesa)
             st.success(f"Despesa de R$ {valor_a_registrar:.2f} adicionada!")
+            # CORREÇÃO: Reseta os valores do formulário para o padrão após o envio
+            st.session_state.ocr_date = datetime.now().date()
+            st.session_state.ocr_value = 0.01
+            st.experimental_rerun() # Força o recarregamento do formulário com os valores resetados
 
 st.subheader("3. Relatório de Despesas")
 if st.session_state.lista_despesas:
@@ -141,15 +136,17 @@ if st.session_state.lista_despesas:
     
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
-        @st.cache_data
-        def convert_df_to_excel(df):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Despesas')
-            return output.getvalue()
         excel_file = convert_df_to_excel(df_final)
         st.download_button(label="📥 Baixar Relatório em Excel", data=excel_file, file_name=f"Relatorio_Despesas_{datetime.now().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     
     with col_btn2:
         pdf_file = gerar_pdf_otimizado(st.session_state.lista_despesas)
         st.download_button(label="📄 Baixar PDF com as Notas", data=pdf_file, file_name=f"Comprovantes_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
+
+# Função de cache para o Excel movida para o final para garantir que seja definida antes de ser chamada
+@st.cache_data
+def convert_df_to_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Despesas')
+    return output.getvalue()
