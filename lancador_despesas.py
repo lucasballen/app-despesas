@@ -9,6 +9,7 @@ import re
 from fpdf import FPDF
 
 # --- Configuração do Tesseract ---
+# Caminho verificado e corrigido conforme sua instalação.
 try:
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 except Exception:
@@ -29,17 +30,13 @@ ATIVIDADES_OPCOES = ["Acompanhamento de projetos", "Atividade Interna", "Ativida
 
 # --- Funções de Lógica ---
 def extrair_dados_nf(imagem_bytes):
-    """Usa OCR para extrair data e valor, retornando também o texto completo para depuração."""
     texto_nf_completo = ""
     try:
         imagem = Image.open(BytesIO(imagem_bytes))
         imagem.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
         imagem = imagem.convert('L')
-
         texto_nf_completo = pytesseract.image_to_string(imagem, lang='por')
-        
         data_extraida, valor_extraido = None, None
-
         padrao_data = re.search(r'(\d{2}[/.-]\d{2}[/.-]\d{2,4})', texto_nf_completo)
         if padrao_data:
             data_str = re.sub(r'[.-]', '/', padrao_data.group(1))
@@ -47,12 +44,10 @@ def extrair_dados_nf(imagem_bytes):
                 data_extraida = datetime.strptime(data_str, '%d/%m/%Y').date()
             except ValueError:
                 data_extraida = datetime.strptime(data_str, '%d/%m/%y').date()
-
-        padrao_valor = re.search(r'(?:VALOR\s+TOTAL|TOTAL\s+A\s+PAGAR|VALOR\s+L[ÍI]QUIDO|TOTAL|SUBTOTAL)\s*R?\$\s*([\d,]+\.?\d{2})', texto_nf_completo, re.IGNORECASE)
+        padrao_valor = re.search(r'(?:VALOR\s+TOTAL|TOTAL\s+A\s+PAGAR|VALOR\s+L[ÍI]QUIDO|TOTAL|SUBTOTAL)\s*R?\$\s*([\d,]+\.?d{2})', texto_nf_completo, re.IGNORECASE)
         if padrao_valor:
             valor_str = padrao_valor.group(1).replace('.', '').replace(',', '.')
             valor_extraido = float(valor_str)
-        
         return data_extraida, valor_extraido, texto_nf_completo
     except Exception as e:
         st.error(f"Ocorreu um erro técnico durante o OCR: {e}")
@@ -105,12 +100,10 @@ with st.expander("📎 Anexar Arquivo do Celular"):
 if imagem_bytes:
     with st.spinner('Lendo a nota fiscal (otimizado)...'):
         data_lida, valor_lido, texto_completo = extrair_dados_nf(imagem_bytes)
-    
     st.subheader("🕵️‍♂️ Resultado da Depuração do OCR")
     st.markdown(f"**Data Encontrada:** `{data_lida}` | **Valor Encontrado:** `{valor_lido}`")
     with st.expander("Clique para ver o texto completo extraído da imagem"):
         st.code(texto_completo if texto_completo else "Nenhum texto foi extraído.")
-
     if data_lida and valor_lido:
         st.session_state.ocr_date = data_lida
         st.session_state.ocr_value = valor_lido
