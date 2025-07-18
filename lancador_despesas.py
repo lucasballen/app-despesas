@@ -29,16 +29,23 @@ ATIVIDADES_OPCOES = ["Acompanhamento de projetos", "Atividade Interna", "Ativida
 
 # --- Funções de Lógica ---
 def extrair_dados_nf(imagem):
+    """Usa OCR para extrair data e valor, com otimizações de imagem para velocidade."""
     try:
+        imagem.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
+        imagem = imagem.convert('L')
+
         texto_nf = pytesseract.image_to_string(imagem, lang='por')
+        
         match_data = re.search(r'(\d{2}/\d{2}/\d{4})', texto_nf)
         data_extraida = datetime.strptime(match_data.group(1), '%d/%m/%Y').date() if match_data else datetime.now().date()
+        
         match_valor = re.search(r'(?:VALOR TOTAL|TOTAL|Valor a pagar)\s*R?\$\s*([\d,]+\.?\d{2})', texto_nf, re.IGNORECASE)
         if match_valor:
             valor_str = match_valor.group(1).replace('.', '').replace(',', '.')
             valor_extraido = float(valor_str)
         else:
             valor_extraido = 0.01
+            
         return data_extraida, valor_extraido
     except Exception:
         return datetime.now().date(), 0.01
@@ -51,10 +58,13 @@ def gerar_pdf_otimizado(lista_de_despesas):
             titulo = f"Despesa: {despesa['Despesa']} - Data: {despesa['Data'].strftime('%d/%m/%Y')} - Valor: R$ {despesa['Valor']:.2f}"
             pdf.set_font("Arial", size=12)
             pdf.cell(200, 10, txt=titulo, ln=True, align='C')
+            
             imagem_original = Image.open(BytesIO(despesa['Imagem']))
             buffer_otimizado = BytesIO()
             imagem_original.save(buffer_otimizado, format="JPEG", quality=80, optimize=True)
+            
             pdf.image(buffer_otimizado, x=10, y=30, w=190)
+            
     return bytes(pdf.output())
 
 # --- Inicialização da Sessão ---
@@ -67,24 +77,23 @@ st.title("💸 Lançador Inteligente de Despesas")
 st.subheader("1. Adicione a Nota Fiscal")
 imagem_bytes = None
 
-tab_camera, tab_upload = st.tabs(["📷 Tirar Foto", "📎 Anexar Arquivo"])
-
-with tab_camera:
-    foto_camera = st.camera_input("Aponte a câmera para a nota fiscal")
+# --- LÓGICA DE UPLOAD COM EXPANDER ---
+# A câmera e o upload ficam em seções "sanfona" que só carregam quando abertas.
+with st.expander("📷 Tirar Foto com a Câmera"):
+    foto_camera = st.camera_input("Aponte a câmera para a nota fiscal", key="camera")
     if foto_camera:
         imagem_bytes = foto_camera.getvalue()
 
-with tab_upload:
-    arquivo_anexado = st.file_uploader("Selecione a imagem da sua NF (.jpg, .png)", type=['jpg', 'png', 'jpeg'])
+with st.expander("📎 Anexar Arquivo do Celular"):
+    arquivo_anexado = st.file_uploader("Selecione a imagem da sua NF (.jpg, .png)", type=['jpg', 'png', 'jpeg'], key="uploader")
     if arquivo_anexado:
         imagem_bytes = arquivo_anexado.getvalue()
 
 data_valor_default, valor_default = datetime.now().date(), 0.01
 
 if imagem_bytes is not None:
-    st.info("Imagem recebida. Processando para leitura automática...")
     imagem = Image.open(BytesIO(imagem_bytes))
-    with st.spinner('Lendo a nota fiscal...'):
+    with st.spinner('Lendo a nota fiscal (otimizado)...'):
         data_valor_default, valor_default = extrair_dados_nf(imagem)
     st.success("Nota fiscal lida! Verifique os campos abaixo.")
 
