@@ -9,11 +9,11 @@ import re
 from fpdf import FPDF
 
 # --- Configuração do Tesseract ---
-# Caminho verificado e corrigido conforme sua instalação.
+# ATUALIZADO: Apontando para a nova pasta de instalação pessoal para evitar problemas de permissão.
 try:
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Users\lucas.ballen\Tesseract-OCR\tesseract.exe'
 except Exception:
-    st.error("Tesseract não encontrado. Verifique o caminho da instalação no código.")
+    st.error("Tesseract não encontrado. Verifique se o caminho da instalação está correto no código.")
 
 # --- Configuração da Página e Localização ---
 st.set_page_config(page_title="Lançador de Despesas", page_icon="💸")
@@ -44,7 +44,7 @@ def extrair_dados_nf(imagem_bytes):
                 data_extraida = datetime.strptime(data_str, '%d/%m/%Y').date()
             except ValueError:
                 data_extraida = datetime.strptime(data_str, '%d/%m/%y').date()
-        padrao_valor = re.search(r'(?:VALOR\s+TOTAL|TOTAL\s+A\s+PAGAR|VALOR\s+L[ÍI]QUIDO|TOTAL|SUBTOTAL)\s*R?\$\s*([\d,]+\.?d{2})', texto_nf_completo, re.IGNORECASE)
+        padrao_valor = re.search(r'(?:VALOR\s+TOTAL|TOTAL\s+A\s+PAGAR|VALOR\s+L[ÍI]QUIDO|TOTAL|SUBTOTAL)\s*R?\$\s*([\d,]+\.?\d{2})', texto_nf_completo, re.IGNORECASE)
         if padrao_valor:
             valor_str = padrao_valor.group(1).replace('.', '').replace(',', '.')
             valor_extraido = float(valor_str)
@@ -85,18 +85,15 @@ if 'ocr_value' not in st.session_state:
 # --- Interface Gráfica ---
 st.title("💸 Lançador Inteligente de Despesas")
 st.subheader("1. Adicione a Nota Fiscal")
-
 imagem_bytes = None
 with st.expander("📷 Tirar Foto com a Câmera"):
     foto_camera = st.camera_input("Aponte a câmera para a nota fiscal", key="camera")
     if foto_camera:
         imagem_bytes = foto_camera.getvalue()
-
 with st.expander("📎 Anexar Arquivo do Celular"):
     arquivo_anexado = st.file_uploader("Selecione a imagem da sua NF", type=['jpg', 'png', 'jpeg'], key="uploader")
     if arquivo_anexado:
         imagem_bytes = arquivo_anexado.getvalue()
-
 if imagem_bytes:
     with st.spinner('Lendo a nota fiscal (otimizado)...'):
         data_lida, valor_lido, texto_completo = extrair_dados_nf(imagem_bytes)
@@ -110,7 +107,6 @@ if imagem_bytes:
         st.success("Leitura concluída! Verifique os campos abaixo e preencha o restante.")
     else:
         st.warning("Não foi possível ler a data e/ou o valor da nota. Verifique o resultado da depuração acima e preencha os campos manualmente.")
-
 st.subheader("2. Formulário de Despesa")
 with st.form("form_despesas"):
     col1, col2 = st.columns(2)
@@ -125,7 +121,6 @@ with st.form("form_despesas"):
         observacoes_usuario = st.text_area("Observações")
     almoco_cliente = st.toggle("Foi almoço com cliente?", help="Marque para isenção do teto de gastos.")
     submitted = st.form_submit_button("Adicionar Despesa ao Relatório")
-
     if submitted:
         valor_a_registrar, observacao_final, pode_adicionar = valor_formulario, observacoes_usuario, True
         if despesa_tipo == "Alimentação" and not almoco_cliente:
@@ -147,7 +142,6 @@ with st.form("form_despesas"):
             st.session_state.ocr_date = datetime.now().date()
             st.session_state.ocr_value = 0.01
             st.experimental_rerun()
-
 st.subheader("3. Relatório de Despesas")
 if st.session_state.lista_despesas:
     df_temp = pd.DataFrame(st.session_state.lista_despesas).sort_values(by='Data')
@@ -155,12 +149,10 @@ if st.session_state.lista_despesas:
     colunas_excel = ['Projeto', 'Profissional', 'Data', 'Despesa', 'Atividade', 'Valor', 'Observações']
     df_final = pd.DataFrame(dados_para_exibicao)[colunas_excel]
     st.dataframe(df_final.style.format({'Valor': "R$ {:.2f}"}))
-    
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         excel_file = convert_df_to_excel(df_final)
         st.download_button(label="📥 Baixar Relatório em Excel", data=excel_file, file_name=f"Relatorio_Despesas_{datetime.now().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    
     with col_btn2:
         pdf_file = gerar_pdf_otimizado(st.session_state.lista_despesas)
         st.download_button(label="📄 Baixar PDF com as Notas", data=pdf_file, file_name=f"Comprovantes_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
