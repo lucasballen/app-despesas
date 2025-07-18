@@ -28,18 +28,34 @@ DESPESAS_OPCOES = ["Alimentação", "Aluguel", "Capacitação", "Combustível", 
 ATIVIDADES_OPCOES = ["Acompanhamento de projetos", "Atividade Interna", "Atividades Comerciais em Geral", "Atividades de Negócios em Geral", "Certificação/Capacitação", "Deslocamento", "Reunião Cliente", "Reunião Compasso", "Treinamento a Clientes", "Treinamento Interno"]
 
 # --- Funções de Lógica ---
-def extrair_dados_nf(imagem):
+# CORREÇÃO: Removido o @st.cache_data que causava o problema de não reler a imagem.
+def extrair_dados_nf(imagem_bytes):
+    """Usa OCR para extrair data e valor, com otimizações e feedback de sucesso."""
     try:
-        imagem.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
+        imagem = Image.open(BytesIO(imagem_bytes))
+        imagem.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
         imagem = imagem.convert('L')
+
         texto_nf = pytesseract.image_to_string(imagem, lang='por')
-        match_data = re.search(r'(\d{2}/\d{2}/\d{4})', texto_nf)
-        data_extraida = datetime.strptime(match_data.group(1), '%d/%m/%Y').date() if match_data else datetime.now().date()
-        match_valor = re.search(r'(?:VALOR TOTAL|TOTAL|Valor a pagar)\s*R?\$\s*([\d,]+\.?\d{2})', texto_nf, re.IGNORECASE)
-        valor_extraido = float(match_valor.group(1).replace('.', '').replace(',', '.')) if match_valor else 0.01
+        
+        data_extraida, valor_extraido = None, None
+
+        padrao_data = re.search(r'(\d{2}[/.-]\d{2}[/.-]\d{2,4})', texto_nf)
+        if padrao_data:
+            data_str = re.sub(r'[.-]', '/', padrao_data.group(1))
+            try:
+                data_extraida = datetime.strptime(data_str, '%d/%m/%Y').date()
+            except ValueError:
+                data_extraida = datetime.strptime(data_str, '%d/%m/%y').date()
+
+        padrao_valor = re.search(r'(?:VALOR\s+TOTAL|TOTAL\s+A\s+PAGAR|TOTAL|SUBTOTAL)\s*R?\$\s*([\d,]+\.?\d{2})', texto_nf, re.IGNORECASE)
+        if padrao_valor:
+            valor_str = padrao_valor.group(1).replace('.', '').replace(',', '.')
+            valor_extraido = float(valor_str)
+        
         return data_extraida, valor_extraido
     except Exception:
-        return datetime.now().date(), 0.01
+        return None, None
 
 def gerar_pdf_otimizado(lista_de_despesas):
     pdf = FPDF()
@@ -55,10 +71,16 @@ def gerar_pdf_otimizado(lista_de_despesas):
             pdf.image(buffer_otimizado, x=10, y=30, w=190)
     return bytes(pdf.output())
 
+@st.cache_data
+def convert_df_to_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Despesas')
+    return output.getvalue()
+
 # --- Inicialização da Sessão ---
 if 'lista_despesas' not in st.session_state:
     st.session_state.lista_despesas = []
-# CORREÇÃO: Usar o session_state para guardar os valores do OCR
 if 'ocr_date' not in st.session_state:
     st.session_state.ocr_date = datetime.now().date()
 if 'ocr_value' not in st.session_state:
@@ -80,22 +102,24 @@ with st.expander("📎 Anexar Arquivo do Celular"):
         imagem_bytes = arquivo_anexado.getvalue()
 
 if imagem_bytes:
-    imagem = Image.open(BytesIO(imagem_bytes))
     with st.spinner('Lendo a nota fiscal (otimizado)...'):
-        # CORREÇÃO: Salva os dados lidos no session_state
-        st.session_state.ocr_date, st.session_state.ocr_value = extrair_dados_nf(imagem)
-    st.success("Nota fiscal lida! Verifique os campos abaixo.")
+        data_lida, valor_lido = extrair_dados_nf(imagem_bytes)
+    
+    if data_lida and valor_lido:
+        st.session_state.ocr_date = data_lida
+        st.session_state.ocr_value = valor_lido
+        st.success("Nota fiscal lida! Verifique os campos abaixo.")
+    else:
+        st.warning("Não foi possível ler a data e/ou o valor da nota. Por favor, preencha manualmente.")
 
 st.subheader("2. Verifique os dados e preencha o restante")
-with st.form("form_despesas", clear_on_submit=False):
+with st.form("form_despesas"):
     col1, col2 = st.columns(2)
     with col1:
         projeto = st.selectbox("Projeto*", options=PROJETOS)
-        # CORREÇÃO: O valor padrão vem do session_state
         data = st.date_input("Data*", value=st.session_state.ocr_date)
         despesa_tipo = st.selectbox("Despesa*", options=DESPESAS_OPCOES)
-        # CORREÇÃO: O valor padrão vem do session_state
-        valor_lido = st.number_input("Valor (R$)*", value=st.session_state.ocr_value, min_value=0.01, format="%.2f")
+        valor_formulario = st.number_input("Valor (R$)*", value=st.session_state.ocr_value, min_value=0.01, format="%.2f")
     with col2:
         profissional = st.selectbox("Profissional*", options=PROFISSIONAIS)
         atividade = st.selectbox("Atividade*", options=ATIVIDADES_OPCOES)
@@ -104,7 +128,7 @@ with st.form("form_despesas", clear_on_submit=False):
     submitted = st.form_submit_button("Adicionar Despesa ao Relatório")
 
     if submitted:
-        valor_a_registrar, observacao_final, pode_adicionar = valor_lido, observacoes_usuario, True
+        valor_a_registrar, observacao_final, pode_adicionar = valor_formulario, observacoes_usuario, True
         if despesa_tipo == "Alimentação" and not almoco_cliente:
             despesas_alimentacao_dia = [d for d in st.session_state.lista_despesas if d['Data'] == data and d['Despesa'] == 'Alimentação' and not d['AlmocoCliente']]
             soma_atual_do_dia = sum(d['Valor'] for d in despesas_alimentacao_dia)
@@ -113,18 +137,17 @@ with st.form("form_despesas", clear_on_submit=False):
                 pode_adicionar = False
             else:
                 limite_restante = 70.00 - soma_atual_do_dia
-                if valor_lido > limite_restante:
+                if valor_formulario > limite_restante:
                     valor_a_registrar = limite_restante
-                    msg_sistema = f"Valor original R$ {valor_lido:.2f} ajustado para R$ {valor_a_registrar:.2f} (teto diário)."
+                    msg_sistema = f"Valor original R$ {valor_formulario:.2f} ajustado para R$ {valor_a_registrar:.2f} (teto diário)."
                     observacao_final = f"{observacoes_usuario} | {msg_sistema}".strip() if observacoes_usuario else msg_sistema
         if pode_adicionar:
             nova_despesa = {'Projeto': projeto, 'Profissional': profissional, 'Data': data, 'Despesa': despesa_tipo, 'Atividade': atividade, 'Valor': valor_a_registrar, 'Observações': observacao_final, 'AlmocoCliente': almoco_cliente, 'Imagem': imagem_bytes}
             st.session_state.lista_despesas.append(nova_despesa)
             st.success(f"Despesa de R$ {valor_a_registrar:.2f} adicionada!")
-            # CORREÇÃO: Reseta os valores do formulário para o padrão após o envio
             st.session_state.ocr_date = datetime.now().date()
             st.session_state.ocr_value = 0.01
-            st.experimental_rerun() # Força o recarregamento do formulário com os valores resetados
+            st.experimental_rerun()
 
 st.subheader("3. Relatório de Despesas")
 if st.session_state.lista_despesas:
@@ -142,11 +165,3 @@ if st.session_state.lista_despesas:
     with col_btn2:
         pdf_file = gerar_pdf_otimizado(st.session_state.lista_despesas)
         st.download_button(label="📄 Baixar PDF com as Notas", data=pdf_file, file_name=f"Comprovantes_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
-
-# Função de cache para o Excel movida para o final para garantir que seja definida antes de ser chamada
-@st.cache_data
-def convert_df_to_excel(df):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Despesas')
-    return output.getvalue()
