@@ -67,7 +67,6 @@ st.title("💸 Lançador Inteligente de Despesas")
 st.subheader("1. Adicione a Nota Fiscal")
 imagem_bytes = None
 
-# --- NOVO SISTEMA DE ABAS PARA UPLOAD ---
 tab_camera, tab_upload = st.tabs(["📷 Tirar Foto", "📎 Anexar Arquivo"])
 
 with tab_camera:
@@ -80,11 +79,10 @@ with tab_upload:
     if arquivo_anexado:
         imagem_bytes = arquivo_anexado.getvalue()
 
-# --- FIM DO NOVO SISTEMA DE ABAS ---
-
 data_valor_default, valor_default = datetime.now().date(), 0.01
 
 if imagem_bytes is not None:
+    st.info("Imagem recebida. Processando para leitura automática...")
     imagem = Image.open(BytesIO(imagem_bytes))
     with st.spinner('Lendo a nota fiscal...'):
         data_valor_default, valor_default = extrair_dados_nf(imagem)
